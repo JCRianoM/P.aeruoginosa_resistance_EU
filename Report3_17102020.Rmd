@@ -1,0 +1,616 @@
+---
+title: "Estimation of resistance percentage of Pseudomonas aeuruginosa to antibiotics"
+subtitle: ""
+author: "Jhoana Patricia Romero, and Julian Camilo Riaño"
+date: ""
+output:
+  html_document: 
+    keep_md: true
+    toc: yes
+    toc_float: true
+    code_folding: hide
+  pdf_document: 
+    keep_tex: yes
+    toc: yes
+    toc_depth: 3
+  keep_tex: yes
+  word_document: default
+  fig_cap: yes
+header-includes:
+- \usepackage[english,activeacute]{babel}
+- \usepackage[utf8]{inputenc}
+- \usepackage{subfigure}
+- \usepackage{float}
+- \usepackage{bm}
+- \usepackage{graphicx}
+- \usepackage[usenames]{color}
+- \usepackage{graphicx}
+- \usepackage{amsmath,bm}
+- \usepackage{amsmath}
+- \usepackage{tikz}
+- \usepackage[dvips,ps2pdf]{epsfig}
+- \usepackage{epstopdf}
+- \usepackage{amsmath, amsthm, amsfonts}
+- \usepackage{float}
+- \usepackage{cite}
+- \usepackage{subfigure}
+- \usepackage{bbm}
+---
+
+
+```{r setup, include=FALSE}
+# define knitr options
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(warning = FALSE)
+knitr::opts_chunk$set(message = FALSE)
+knitr::opts_chunk$set(echo = TRUE, fig.pos= "h")
+```
+
+```{r, include=FALSE}
+# instalar paquetes. 
+library(ggplot2)
+ library(dplyr)
+ library(gridExtra)
+library(knitr)
+library(ggcorrplot)
+library(ggthemes)
+library(GGally)
+library(pander) ##paquete para tablas pandoc
+library(reshape2)##arreglar imagenes
+library(ggrepel)
+library(corrplot)
+library(pracma)
+library(aplpack)
+library(cluster)
+library(dendextend)
+library(magrittr)
+library(mvnormtest)
+library(tidyverse)
+library(factoextra)
+library(FactoMineR)
+library(dplyr)
+library(tidyverse)
+library(tseries)
+library(ggplot2)
+library(ggfortify)
+library(plotly)
+library(pander) ##paquete para tablas pandoc
+library(dslabs)
+library(gridExtra)
+library(kableExtra)
+```
+
+```{r carga de la base de datos, include = FALSE}
+Pseudomona <- read.csv("data_complete_int.csv", header=TRUE) %>% 
+  rename('R_multi' = 'multi_R_perc', 
+         'R_index' = 'r_index')
+
+### creating a function that become values above 0 to 0 (because this are frequencies)
+min_0 <- function(x){ifelse(x < 0, 0, x)}
+
+### applying function min_0 to every importan resistance variable ###
+x <- Pseudomona %>% mutate(across(c("Aminoglycosides", "Carbapenems", "Ceftazidime",
+                               "Fluoroquinolones", "Piperacilina_taz", "R_multi"),
+                               min_0))
+
+### creating chunks of data to further analysis & generating data variables ###
+Pseudomona <- Pseudomona[, -c(3, 11:12, 14:26)]
+p.aeuro_r <- Pseudomona
+Data <- as_tibble(Pseudomona[, -c(1:4, 11:12, 14:26)])
+str(Data)
+n <- nrow(Data) 
+
+#Data=as.data.frame(scale(Data))
+```
+#Descriptive analysis
+
+```{r descriptive analysis, echo=FALSE}
+gath_p.aeuro <- Pseudomona %>% 
+    gather(key = "antibiotic", value = "resistance", 5:10)
+```
+
+
+```{r density plot total antibiotics, message=FALSE, echo=FALSE}
+gath_p.aeuro %>% ggplot(aes(resistance)) + 
+    scale_x_continuous(trans = "log2",
+                       labels = scales::number_format(accuracy = 0.01)) +
+    geom_density(aes(fill=factor(antibiotic)), 
+             alpha=0.8, 
+             position = "stack") + 
+    labs(title="Density plot", 
+         subtitle="Antibiotic resistance total",
+         #caption="Source: mpg",
+         x="Resistance percentage",
+         fill="Antibiotics") + 
+    ds_theme_set(plot.title = element_text(hjust = 0.5), 
+                 legend.title = element_blank(), legend.position="bottom")
+
+```
+
+
+```{r boxplot total antibiotic vs Region, message=FALSE, echo=FALSE}
+gath_p.aeuro %>%
+    mutate(Region = reorder(Region, resistance, FUN = mean)) %>%      # reorder
+    ggplot(aes(Region, resistance, fill = antibiotic)) +    # color by continent
+    geom_boxplot() +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1)) + 
+    ylab("Resistance percentage (log2)") +
+    xlab("") + 
+    geom_jitter(width = 0.1, alpha = 0.1)+
+    scale_y_continuous(trans = 'log2', 
+                       labels = scales::number_format(accuracy = 0.01)) + 
+    ggtitle("Boxplot by Region")+ 
+    ds_theme_set(plot.title = element_text(hjust = 0.5), 
+                 legend.title = element_blank(), legend.position="bottom")
+
+```
+
+
+
+```{r boxplot total antibiotic vs country, message=FALSE, echo=FALSE}
+gath_p.aeuro %>%
+    mutate(Country = reorder(Country, resistance, FUN = mean)) %>%      # reorder
+    ggplot(aes(Country, resistance, fill = antibiotic)) +    # color by antibiotic
+    geom_boxplot() +
+    ylab("Resistance percentage (log2)")+
+    xlab("") + #geom_point(show.legend = FALSE) + 
+    scale_y_continuous(trans = 'log2', 
+                       labels = scales::number_format(accuracy = 0.01)) + 
+    ggtitle("Boxplot by country")+ 
+    ds_theme_set(plot.title = element_text(hjust = 0.5), 
+                 legend.title = element_blank(), legend.position="bottom", 
+                 axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+
+
+```{r organización para serie, message=FALSE, echo=FALSE}
+# time series trying
+Serie <- p.aeuro_r %>% group_by(Year) %>% summarise_if(is.numeric, mean)
+tsbact <- ts(Serie[-1],
+            frequency = 1, 
+           start = 2005)
+```
+
+
+```{r serie de tiempo entre antibióticos, message=FALSE, echo=FALSE}
+autoplot(tsbact, facets=FALSE, label = TRUE) +
+    ggtitle("P. aeuruginosa  time series plot") +
+#   geom_text(data = labels, aes(x, y, label = names(serie[-1])), size = 3) +
+#   theme(legend.position = "none")
+    #aes(linetype = plot_group,
+     #   size = plot_group) +  
+    scale_size_manual(values = c(1, 1, 1, 1.5, 1, 1)) + 
+    ds_theme_set(plot.title = element_text(hjust = 0.5), 
+                 legend.title = element_blank(), legend.position="bottom") #este theme solicita dslabs
+```
+
+
+
+
+
+# Correlation analysis
+
+```{r vector de medias y desviaciones, echo=FALSE}
+Mean_vector<- apply(Data, 2, mean) 
+pandoc.table(Mean_vector,
+             caption = 'Mean vector',
+             digits = 4,
+             split.table = Inf,
+             align = 'r')
+#desviacion
+Deviation_vector<-apply(Data, 2, sd)
+pandoc.table(Deviation_vector,
+             caption = 'Deviation vector',
+             digits = 4,
+             split.table = Inf,
+             align = 'r')
+#coeficiente de variación
+CV_vector=(Deviation_vector/Mean_vector)*100
+pandoc.table(CV_vector,
+             caption = 'Variation coefficient',
+             digits = 4,
+             split.table = Inf,
+             align = 'r')
+
+nivel.confianza=0.95
+error.est <- Deviation_vector/sqrt(n)
+margen.error <- 1.644854 * error.est
+Lim_inf <- Mean_vector- margen.error
+Lim_sup<- Mean_vector+ margen.error
+Intervals_vector=cbind(Lim_inf, Lim_sup)
+pandoc.table(Intervals_vector,
+             caption = 'Confidence intervals',
+             digits = 4,
+             split.table = Inf,
+             align = 'r')
+
+#Correlation matrix
+Correlation_matrix<- round(cor(Data), 2)
+pandoc.table(Correlation_matrix,
+             caption = 'Correlation Matrix',
+             digits = 4,
+             split.table = Inf,
+             align = 'r')
+```
+
+
+```{r diagrama de dispersion, echo=FALSE, fig.cap='Dispersion-correlation diagram.'}
+my_fnUPP <- function(data, mapping, method="p", use="pairwise", ...){
+  x <- eval_data_col(data, mapping$x)
+  y <- eval_data_col(data, mapping$y)
+  corr <- cor(x, y, method=method, use=use)
+  colFn <- colorRampPalette(c("blue", "white", "pink"), interpolate ='spline')
+  fill <- colFn(100)[findInterval(corr, seq(-1, 1, length=100))]
+  
+  ggally_cor(data = data, mapping = mapping, ...) + 
+    theme_void() +
+    theme(panel.background = element_rect(fill=fill))
+}
+diag_fun <- function(data, mapping, hist=list(), ...){
+  
+  X = eval_data_col(data, mapping$x)
+  mn = mean(X)
+  s = sd(X)
+  
+  ggplot(data, mapping) + 
+    do.call(function(...) geom_histogram(aes(y =..density..), ...), hist) +
+    stat_function(fun = dnorm, args = list(mean = mn, sd = s), ...)
+}
+my_fnLOW <- function(data, mapping, ...){
+  p <- ggplot(data = data, mapping = mapping) + 
+    geom_point(size = .7) + 
+    geom_smooth(method=loess, fill="red", color="red", ...) +
+    geom_smooth(method=lm, fill="blue", color="blue", ...)
+  p
+}
+Graph_cor_AB <- ggpairs(Data, 
+                        title = 'Dispersion-Correlation diagram',
+                        axisLabels = 'show', 
+                        upper = list(continuous = my_fnUPP), 
+                        diag = list(continuous = diag_fun),
+                        lower = list(continuous = my_fnLOW)) +
+  theme(
+    plot.title = element_text(size = 12, 
+                              face = "bold", 
+                              hjust = 0.5, 
+                              vjust=2.5),
+  )
+Graph_cor_AB 
+```
+
+
+
+# Principal components analysis
+
+
+```{r PCA, include=FALSE}
+Data.2<- as_tibble(Data[, -c(6)])
+Matrix_Data=as.matrix(Data.2)
+Data_PCA<- PCA(Matrix_Data, scale.unit = TRUE, graph = F)
+var_PCA= get_pca_var(Data_PCA)
+pca=princomp(~+Aminoglycosides+Carbapenems+Ceftazidime+Piperacilina_taz+Fluoroquinolones, data=Data.2,cor=TRUE)
+eigen_data<- get_eigenvalue(Data_PCA)
+pandoc.table(eigen_data,
+             caption = 'Eigen values matrix of PCA',
+             digits = 3,
+             split.table = Inf,
+             align = 'r')
+```
+
+
+```{r gráfica varianza explicada, echo=FALSE, message=FALSE, fig.cap= 'Eigen values ScreePlot'}
+fviz_eig(Data_PCA, addlabels = TRUE, ylim=c(0,90), xlab = 'Dimensions', 
+         ylab = 'Explained variance percentage') 
+```
+
+
+```{r coordenadas de las variables, include=FALSE}
+coordinates_pca<- get_pca_var(Data_PCA)
+pandoc.table(coordinates_pca$coord,
+             caption = 'Coordinates matrix of variables',
+             digits = 4,
+             split.table = Inf,
+             align = 'r')
+
+```
+
+
+```{r circulo de correlaciones, echo=FALSE, fig.cap='Original variables coordinates and contribution'}
+fviz_pca_var(Data_PCA, col.var="contrib", labelsize = 3) +
+  scale_color_gradient2(low="blue", mid="red",
+                        high="white", midpoint=33) +
+  theme_minimal()
+```
+
+
+
+```{r PCA varianza Contribuciones, echo=FALSE, message=FALSE, results='asis'}
+pandoc.table(var_PCA$contrib,
+             caption = 'Contribution matrix',
+             digits = 4,
+             split.table = Inf,
+             align = 'r')
+```
+
+
+```{r Contribucion en la componente 1 y 2, echo=FALSE, message=FALSE, fig.cap='Contribution percentage of the variables in the first two dimensions.  The red line shows the expected contribution percentage in each dimension.' }
+#componente 1
+par(mfrow=c(1,2))
+fviz_contrib(Data_PCA, 
+             choice = "var",
+             axes = 1, top=10, 
+             fill = "lightgray", 
+             color = "black") +
+  ggtitle('Contribution to Dim.1') +
+  ylab('Contribution (%)') + 
+  xlab('') + 
+  theme_minimal()
+#componente 2
+fviz_contrib(Data_PCA, choice = "var", axes = 2, top=10,  
+             fill = "lightgray", color = "black") + 
+  ggtitle('Contribution to Dim.2') +
+  ylab('Contribution (%)') + 
+  xlab('') + 
+  theme_minimal()
+
+```
+
+
+
+
+
+```{r combinacion lineal, include=FALSE}
+round(pca$loadings[,1:5],3)
+```
+
+
+```{r biplot by region, echo=FALSE, message=FALSE, results='asis', fig.cap='Contribution Biplot by Region.'}
+fviz_pca_biplot(Data_PCA, 
+                # Individuals
+                geom.ind = "point",
+                fill.ind = Pseudomona$Region, col.ind = "white",
+                pointshape = 21, 
+                pointsize = 2,
+                palette = "jco",
+                labelsize = 3,
+                addEllipses = TRUE,
+                # Variables
+                alpha.var ="contrib", 
+                col.var = "contrib",
+                gradient.cols = "RdBu") + 
+    labs(fill = "Bacteria", 
+         color = "Contribution", 
+         alpha = "Contribution") +
+    theme(legend.title = 
+              element_text(face = "bold")) # Change legend title
+```
+
+
+
+# Principal components regression
+
+```{r nueva matriz de variables, include=FALSE}
+Data=as.data.frame(scale(Data))
+#Data<- as_tibble(Pseudomona[, -c(1:4, 11)])
+
+# Se seleccionan 260 de los 372 índices aleatorios que formarán el training set. 
+set.seed(1)
+training <- sample(x = 1:372, 260)
+#Multi.training=training$Multi
+#nueva_col=princomp(~+Amino+Carba+Cefta+Piper+Fluo, data=Data,cor=TRUE)
+#z1.nueva_col=as.data.frame(nueva_col$scores[,1])
+#View(z1.nueva_col)
+#nuevos.datos=data.frame(Data,z1.nueva_col)
+#write.csv(nuevos.datos, file="new.dataset.csv")
+
+cps.training=princomp(~+Aminoglycosides+Carbapenems+Ceftazidime+Piperacilina_taz+Fluoroquinolones, data=Data,cor=TRUE, scale.unit = TRUE)
+z1.training<- cps.training$scores[,1]
+#Z1=z1.training
+#z1.test=cps.test$scores[,1]
+Reg=lm(multi_R_perc~z1.training+0,data=Data, subset=training)
+summary(Reg)
+confint(Reg)
+#library(car)
+#vif(Reg)
+```
+
+
+
+```{r prueba de hipotesis de beta, include=FALSE}
+# two sided p-value for fitted slope parameter, t stat:  slope est / std err
+pval <- summary(Reg)$coefficient[,"Pr(>|t|)"][1]
+names(pval) <- NULL
+pval
+
+```
+
+
+```{r anova test, echo=FALSE}
+anova(Reg)
+```
+
+
+```{r comparision of clasic model and pca model, include=FALSE}
+#Data<- as_tibble(Pseudomona[, -c(1:4, 11)])
+#Data=as.data.frame(scale(Data))
+#modelo_clas <- lm(formula = Multi ~ Amino+Carba+Cefta+Fluo+Piper+0,
+ #            data = Data,subset=training)
+#summary(modelo_clas)
+#confint(modelo_clas)
+```
+
+```{r validacion con los datos de prueba, echo=FALSE}
+Data=as.data.frame(scale(Data))
+#Data<- as_tibble(Pseudomona[, -c(1:4, 11)])
+Multi=Data$Multi
+predict.pca <- predict(object = Reg, newdata = Data[-training, ])
+MSEpca=mean((Data$Multi[-training] - predict.pca)^2)
+#predict.clas <- predict(object=modelo_clas,newdata=Data[-training, ])
+#MSEclas=mean((Data$Multi[-training] - predict.clas)^2)
+MSEpca
+```
+
+
+```{r plot linear regression sobre PCA, echo=FALSE, fig.cap='Fitted relationship between multiresistance percentage and Z1.'}
+ggplot(data = Data, aes(x = z1.training, y = multi_R_perc)) +
+geom_point(colour = c("firebrick3"), size=2) +
+geom_smooth(method = "lm", colour = "blue") +
+theme_bw() +
+labs(title  =  'Multi ~ Z1') +
+theme(plot.title = element_text(hjust = 0.5, face = 'bold'))
+```
+
+## Hipotesis del modelo lineal multiple
+
+\begin{itemize}
+\item [H1] Normal distribution of residuals. \textcolor{red}{Los residuos se deben distribuir de forma normal con media cero. Para comprobarlo se recurre a histogramas, a los cuantiles normales o a test de hipótesis de normalidad.}  From the Shapiro--test we obtain a $p$--value=$7.13\times 10^{-15}$.  Thus the residuals are not normally distributed.
+\item [H2] Linear relationship between both variables.  \textcolor{red}{Aqui graficamos los residuos Si la relación es lineal, los residuos se distribuyen de forma aleatoria entorno a cero.}
+\item [H3] Constant variability of the residuals (homoscedasticity).  \textcolor{red}{La varianza de los residuos debe de ser constante en todo el rango de observaciones. Para comprobarlo se representan los residuos. Si la varianza es constante, se distribuyen de forma aleatoria manteniendo una misma dispersión y sin ningún patrón específico. Una distribución cónica es un claro identificador de falta de homocedasticidad. También se puede recurrir a contrastes de homocedasticidad como el test de Breusch-Pagan.} 
+\item [H4] Ausencia de multocolinealidad. \textcolor{red}{Las observaciones han de ser independientes unas de otras. Tener en cuenta en el caso de mediciones temporales. ¿Cómo comprobarlo? Graficar los residuos y estudiar si siguen un patrón o tendencia.  También se puede emplear el test de hipótesis de Durbin-Watson.contrastamos H0: hay autocorrelacion}.  From Durbin--Watson test we can see that $p$--value=0.018.  Thus we reject the null hypothesis of autocorrelation.
+\end{itemize}
+
+```{r H1 distribicuion normal de los residuos, echo=FALSE, fig.cap='Residuals analysis.'}
+library(gridExtra)
+Reg2=lm(multi_R_perc~z1.training+0,data=Data)
+plot(Reg2)
+shapiro.test(Reg2$residuals)
+#Los residuales no están normalmente distribuidos 
+```
+
+```{r H1 normalidad de los residuos dos, echo=FALSE}
+# Análisis gráfico autocorrelación de los residuos
+ggplot(data = Data, aes(x = seq_along(Reg2$residuals), 
+                         y = Reg2$residuals)) +
+geom_point(aes(color = Reg2$residuals)) +
+scale_color_gradient2(low = "blue3", mid = "grey", high = "red") +
+geom_line(size = 0.3) + 
+labs(title = "Residuals distribution", x = "Index", y = "Residuals")+ 
+geom_hline(yintercept = 0) + 
+theme(plot.title = element_text(hjust = 0.5), legend.position = "none")
+```
+
+
+
+```{r H2 relacion lineal de los residuos, echo=FALSE, fig.cap='H1: Predictor variable vs residuals.'}
+#los residuos del modelo frente a cada uno de los predictores. Si la relación es lineal, los residuos se distribuyen de forma aleatoria entorno a cero.
+plot1 <- ggplot(data = Data, aes(x = z1.training, y = Reg2$residuals))+
+ geom_point() + geom_smooth(color = "firebrick") + geom_hline(yintercept = 0) +
+  theme_bw()
+plot1
+```
+
+
+```{r H3 homosedasticidad, echo=FALSE, fig.cap='Homoscedasticity test.'}
+library(lmtest)
+ggplot(data = Data, aes(Reg2$fitted.values, Reg2$residuals)) +
+  geom_point() +
+  geom_smooth(color = "firebrick", se = FALSE) +
+  geom_hline(yintercept = 0) +
+  theme_bw()
+
+```
+
+
+```{r observaciones influyentes, echo=FALSE, fig.cap='Influential observations'}
+library(car)
+y=influencePlot(model = Reg2)
+y$Hat
+```
+
+```{r H4 independence , echo=FALSE}
+library(car)
+dwt(Reg2, alternative = "two.sided")
+#Ho: los datos son correlacionados
+#H1: los datos no son correlacionado
+#se rechaza la hipótesis nula de autocorrelacion
+```
+
+
+```{r obteniendo la verdadera funcion lineal, include=FALSE}
+round((coefsCP<-Reg$coefficients[1] %*% t(pca$loadings[,1])),3)
+```
+
+
+# K-means clustering
+
+```{r adecuo la base de datos para cluster, include=FALSE}
+attach(Pseudomona)
+mean_pseudo<- Pseudomona %>% group_by(Country) %>%
+    summarise(Amino = mean(Aminoglycosides), 
+              Carba = mean(Carbapenems), 
+              Fluo = mean(Fluoroquinolones), 
+              Cefta = mean(Ceftazidime), 
+              Piper = mean(Piperacilina_taz),
+              Multi=mean(multi_R_perc))
+multi_pseudo <- as_tibble(mean_pseudo[, -1])
+rownames(multi_pseudo) <- mean_pseudo$Country
+```
+
+
+```{r Heat map, echo=FALSE, message=FALSE, results='asis', fig.cap='Heat map for euclidean distances between countries from EEUU with respect to resistance percentages to antibiotics for *P. aueruginosa*'}
+distance<- get_dist(multi_pseudo, stand = TRUE, method = "euclidean") 
+fviz_dist(distance, 
+          gradient = list(low = "#00AFBB", mid = "white", high = "#FC4E07"))
+```
+
+
+```{r Mojena criterion, echo=FALSE}
+mojena = function(hc){
+    n_hd = length(hc$height)
+    alp_g = 0 ; alpha = hc$height[n_hd:1]
+    for(i in 1:(n_hd-1)){
+        alp_g[i] = mean(alpha[(n_hd-i+1):1])+1.25*sd(alpha[(n_hd-i+1):1])
+        # alp_g[i] = mean(alpha[(n_hd-i+1):1])+3.5*sd(alpha[(n_hd-i+1):1])
+    }
+    nog = sum(alp_g<= alpha[-n_hd]) + 1
+    plot(alpha[-n_hd], pch=20, col=(alp_g>alpha[-n_hd])+1, main = paste("Número óptimo de grupos =",nog),
+         ylab = expression(alpha[g]), xlab="Nodos")}
+
+#Dendograma método de average
+average_pseudo= hclust(distance, method = "average")
+fviz_dend(average_pseudo, k = 3, # Cortar en 3 grupos
+          cex = 0.5, # tama?o de las etiquetas
+          k_colors = "npg", # color de los grupos
+          color_labels_by_k = TRUE, # color de las etiquetas de los grupos
+          rect = TRUE # Agregar un rect?ngulo a los grupos
+)
+
+#Mojena número de clústers
+#mojena(average_pseudo)
+```
+
+
+
+```{r Metodo de K-medias posteriormente graficas, echo=FALSE, include = FALSE}
+#hacemos los cluster
+cluster1 <- scale(multi_pseudo)
+set.seed(123) ## Semilla
+km.res_p.aeruginosa <- kmeans(cluster1, 3,nstart = 25)
+cluster2 <- cbind(multi_pseudo, 
+                   cluster1=km.res_p.aeruginosa$cluster)
+```
+
+
+
+```{r Optimal numbr of clusters por wss, echo=FALSE, message=FALSE, results='asis', fig.cap='Optimal number of clusters $K-medias$ method WSS (within-cluster sum of square)'}
+
+fviz_nbclust(cluster1,kmeans,method = "wss")+
+    geom_vline(xintercept = 3, linetype=2) ## Advertencia
+```
+
+
+
+```{r clusters k medias, echo=FALSE, message=FALSE, results='asis', fig.cap='Clusters using  k-mean method'}
+## Visualizaci?n conglomerados K-medias
+fviz_cluster(km.res_p.aeruginosa, 
+             data = cluster1, 
+             palette="jco",
+             labelsize = 8,
+             star.plot= TRUE,
+             pointsize = 2,
+             repel = TRUE,
+             ggtheme=theme_minimal()
+)
+```
+
